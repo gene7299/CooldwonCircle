@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>位置冷卻時間安全範圍地圖</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    
+    <style>
+        body { margin: 0; padding: 0; font-family: "Microsoft JhengHei", Arial, sans-serif; }
+        #map { height: 100vh; width: 100%; z-index: 1; }
+        
+        /* 控制面板樣式 */
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: #ffffff9e;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            max-width: 300px;
+        }
+        
+        h3 { margin: 0 0 10px 0; font-size: 18px; }
+        
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            color: white;
+        }
+        
+        .btn-locate { background-color: #007bff; }
+        .btn-locate:hover { background-color: #0056b3; }
+        
+        .btn-start { background-color: #28a745; }
+        .btn-start:hover { background-color: #218838; }
+        
+        .btn-reset { background-color: #dc3545; display: none;}
+
+        #status {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .highlight { color: #d63384; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <h3>安全距離計算器</h3>
+        <button class="btn btn-locate" onclick="locateUser()">📍 定位目前位置</button>
+        <button class="btn btn-start" id="startBtn" onclick="startTimer()" disabled>⏱️ 開始計時 (冷卻)</button>
+        <button class="btn btn-reset" id="resetBtn" onclick="resetTimer()">🔄 重置</button>
+        
+        <div id="status">
+            請先定位您的位置。
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // --- 1. 初始化地圖 ---
+        // 預設中心點 (台灣)
+        var map = L.map('map').setView([23.6978, 120.9605], 8);
+
+        // 使用 OpenStreetMap 圖資
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        var userMarker = null;
+        var rangeCircle = null;
+        var userLatLng = null;
+        var timerInterval = null;
+        var startTime = null;
+
+        // --- 2. 定義冷卻時間表 (轉換為 秒: 公里) ---
+        // 為了讓圓圈平滑變大，我們需要進行插值計算
+        const cooldownTable = [
+            { time: 0, dist: 0 },
+            { time: 30, dist: 1 },        // 30秒 1km
+            { time: 120, dist: 5 },       // 2分 5km
+            { time: 420, dist: 10 },      // 7分 10km
+            { time: 480, dist: 12 },      // 8分 12km
+            { time: 600, dist: 18 },      // 10分 18km
+            { time: 900, dist: 26 },      // 15分 26km
+            { time: 1140, dist: 42 },     // 19分 42km
+            { time: 1320, dist: 65 },     // 22分 65km
+            { time: 1500, dist: 81 },     // 25分 81km
+            { time: 2100, dist: 100 },    // 35分 100km
+            { time: 2700, dist: 250 },    // 45分 250km
+            { time: 3240, dist: 375 },    // 54分 375km
+            { time: 3720, dist: 460 },    // 62分 460km
+            { time: 4140, dist: 565 },    // 69分 565km
+            { time: 4680, dist: 700 },    // 78分 700km
+            { time: 5040, dist: 800 },    // 84分 800km
+            { time: 5520, dist: 900 },    // 92分 900km
+            { time: 5940, dist: 1000 },   // 99分 1000km
+            { time: 7020, dist: 1300 },   // 117分 1300km
+            { time: 7200, dist: 1500 }    // 120分 (2小時) 1500km+
+        ];
+
+        // --- 3. 定位功能 ---
+        function locateUser() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = "正在獲取位置...";
+
+            if (!navigator.geolocation) {
+                statusDiv.innerHTML = "您的瀏覽器不支援地理定位。";
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    userLatLng = [lat, lng];
+
+                    // 如果已經有標記，移除舊的
+                    if (userMarker) map.removeLayer(userMarker);
+                    if (rangeCircle) map.removeLayer(rangeCircle);
+
+                    // 新增標記並移動地圖
+                    userMarker = L.marker(userLatLng).addTo(map)
+                        .bindPopup("您的位置").openPopup();
+                    map.setView(userLatLng, 13);
+
+                    // 啟用開始按鈕
+                    document.getElementById('startBtn').disabled = false;
+                    statusDiv.innerHTML = "已定位完成！<br>請按下「開始計時」以模擬冷卻時間。";
+                },
+                () => {
+                    statusDiv.innerHTML = "無法獲取您的位置，請確認瀏覽器權限。";
+                }
+            );
+        }
+
+        // --- 4. 計算目前應有的半徑 (線性插值) ---
+        function getRadiusByTime(elapsedSeconds) {
+            // 如果超過表定最大時間 (2小時)，就回傳最大距離
+            if (elapsedSeconds >= 7200) return 1500 * 1000; // 轉為公尺
+
+            // 尋找目前時間落在表格的哪兩個區間之間
+            for (let i = 0; i < cooldownTable.length - 1; i++) {
+                let p1 = cooldownTable[i];
+                let p2 = cooldownTable[i+1];
+
+                if (elapsedSeconds >= p1.time && elapsedSeconds < p2.time) {
+                    // 線性插值計算
+                    // 進度比例 = (經過時間 - 起始時間) / (結束時間 - 起始時間)
+                    let ratio = (elapsedSeconds - p1.time) / (p2.time - p1.time);
+                    // 距離 = 起始距離 + (距離差 * 比例)
+                    let currentKm = p1.dist + (p2.dist - p1.dist) * ratio;
+                    return currentKm * 1000; // 轉為公尺回傳
+                }
+            }
+            return 0;
+        }
+
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60);
+            return `${m} 分 ${s} 秒`;
+        }
+
+        // --- 5. 開始計時與繪製圓圈 ---
+        function startTimer() {
+            if (!userLatLng) return;
+
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('resetBtn').style.display = 'block';
+            
+            startTime = Date.now(); // 記錄開始時間
+            
+            // 初始化圓圈 (紅色，半透明)
+            if (rangeCircle) map.removeLayer(rangeCircle);
+            rangeCircle = L.circle(userLatLng, {
+                color: 'red',
+                fillColor: '#f03',
+                fillOpacity: 0.2,
+                radius: 0
+            }).addTo(map);
+
+            // 每 100 毫秒更新一次畫面
+            timerInterval = setInterval(() => {
+                const now = Date.now();
+                const elapsedSeconds = (now - startTime) / 1000;
+                
+                // 1. 計算半徑
+                const currentRadiusMeters = getRadiusByTime(elapsedSeconds);
+                
+                // 2. 更新地圖上的圓
+                rangeCircle.setRadius(currentRadiusMeters);
+
+                // 3. 更新文字資訊
+                document.getElementById('status').innerHTML = `
+                    已經過時間: <span class="highlight">${formatTime(elapsedSeconds)}</span><br>
+                    安全半徑: <span class="highlight">${(currentRadiusMeters / 1000).toFixed(2)} km</span>
+                `;
+
+                // 動態調整地圖縮放以適應圓圈大小 (可選，這裡設為每10公里檢查一次避免畫面一直跳)
+                // 若要讓使用者自由縮放，可註解掉下面這行
+                // map.fitBounds(rangeCircle.getBounds()); 
+
+            }, 100); // 更新頻率
+        }
+
+        function resetTimer() {
+            clearInterval(timerInterval);
+            if (rangeCircle) map.removeLayer(rangeCircle);
+            document.getElementById('status').innerHTML = "計時已重置。";
+            document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('resetBtn').style.display = 'none';
+            document.getElementById('startBtn').disabled = false;
+        }
+    </script>
+</body>
+</html>
