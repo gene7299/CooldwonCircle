@@ -1,16 +1,27 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>位置冷卻時間安全範圍地圖</title>
-    
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-    
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
     <style>
-        body { margin: 0; padding: 0; font-family: "Microsoft JhengHei", Arial, sans-serif; }
-        #map { height: 100vh; width: 100%; z-index: 1; }
-        
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: "Microsoft JhengHei", Arial, sans-serif;
+        }
+
+        #map {
+            height: 100vh;
+            width: 100%;
+            z-index: 1;
+        }
+
         /* 控制面板樣式 */
         #controls {
             position: absolute;
@@ -20,12 +31,15 @@
             background: #ffffff9e;
             padding: 15px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
             max-width: 300px;
         }
-        
-        h3 { margin: 0 0 10px 0; font-size: 18px; }
-        
+
+        h3 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+        }
+
         .btn {
             display: block;
             width: 100%;
@@ -37,14 +51,27 @@
             font-size: 14px;
             color: white;
         }
-        
-        .btn-locate { background-color: #007bff; }
-        .btn-locate:hover { background-color: #0056b3; }
-        
-        .btn-start { background-color: #28a745; }
-        .btn-start:hover { background-color: #218838; }
-        
-        .btn-reset { background-color: #dc3545; display: none;}
+
+        .btn-locate {
+            background-color: #007bff;
+        }
+
+        .btn-locate:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-start {
+            background-color: #28a745;
+        }
+
+        .btn-start:hover {
+            background-color: #218838;
+        }
+
+        .btn-reset {
+            background-color: #dc3545;
+            display: none;
+        }
 
         #status {
             margin-top: 10px;
@@ -53,10 +80,14 @@
             font-size: 14px;
             line-height: 1.6;
         }
-        
-        .highlight { color: #d63384; font-weight: bold; }
+
+        .highlight {
+            color: #d63384;
+            font-weight: bold;
+        }
     </style>
 </head>
+
 <body>
 
     <div id="controls">
@@ -64,7 +95,7 @@
         <button class="btn btn-locate" onclick="locateUser()">📍 定位目前位置</button>
         <button class="btn btn-start" id="startBtn" onclick="startTimer()" disabled>⏱️ 開始計時 (冷卻)</button>
         <button class="btn btn-reset" id="resetBtn" onclick="resetTimer()">🔄 重置</button>
-        
+
         <div id="status">
             請先定位您的位置。
         </div>
@@ -72,7 +103,8 @@
 
     <div id="map"></div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
     <script>
         // --- 1. 初始化地圖 ---
@@ -116,6 +148,23 @@
             { time: 7200, dist: 1500 }    // 120分 (2小時) 1500km+
         ];
 
+        // Max Speed Settings
+        const MAX_SPEED_KMH = 900;
+        const MAX_SPEED_KMS = MAX_SPEED_KMH / 3600;
+
+        // Preprocess table to enforce max speed
+        for (let i = 1; i < cooldownTable.length; i++) {
+            const prev = cooldownTable[i - 1];
+            const curr = cooldownTable[i];
+            const timeDiff = curr.time - prev.time;
+            if (timeDiff > 0) {
+                const maxDist = prev.dist + (timeDiff * MAX_SPEED_KMS);
+                if (curr.dist > maxDist) {
+                    curr.dist = maxDist;
+                }
+            }
+        }
+
         // --- 3. 定位功能 ---
         function locateUser() {
             const statusDiv = document.getElementById('status');
@@ -153,13 +202,10 @@
 
         // --- 4. 計算目前應有的半徑 (線性插值) ---
         function getRadiusByTime(elapsedSeconds) {
-            // 如果超過表定最大時間 (2小時)，就回傳最大距離
-            if (elapsedSeconds >= 7200) return 1500 * 1000; // 轉為公尺
-
             // 尋找目前時間落在表格的哪兩個區間之間
             for (let i = 0; i < cooldownTable.length - 1; i++) {
                 let p1 = cooldownTable[i];
-                let p2 = cooldownTable[i+1];
+                let p2 = cooldownTable[i + 1];
 
                 if (elapsedSeconds >= p1.time && elapsedSeconds < p2.time) {
                     // 線性插值計算
@@ -170,6 +216,15 @@
                     return currentKm * 1000; // 轉為公尺回傳
                 }
             }
+
+            // 超過表定時間，使用最大速度 900km/h 繼續延伸
+            const lastPoint = cooldownTable[cooldownTable.length - 1];
+            if (elapsedSeconds > lastPoint.time) {
+                const extraTime = elapsedSeconds - lastPoint.time;
+                const currentKm = lastPoint.dist + (extraTime * MAX_SPEED_KMS);
+                return currentKm * 1000;
+            }
+
             return 0;
         }
 
@@ -185,9 +240,9 @@
 
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('resetBtn').style.display = 'block';
-            
+
             startTime = Date.now(); // 記錄開始時間
-            
+
             // 初始化圓圈 (紅色，半透明)
             if (rangeCircle) map.removeLayer(rangeCircle);
             rangeCircle = L.circle(userLatLng, {
@@ -201,17 +256,24 @@
             timerInterval = setInterval(() => {
                 const now = Date.now();
                 const elapsedSeconds = (now - startTime) / 1000;
-                
+
                 // 1. 計算半徑
                 const currentRadiusMeters = getRadiusByTime(elapsedSeconds);
-                
+
                 // 2. 更新地圖上的圓
                 rangeCircle.setRadius(currentRadiusMeters);
 
-                // 3. 更新文字資訊
+                // 3. 計算目前的擴張速度 (改為平均速度: 總距離 / 總時間)
+                let currentSpeed = 0;
+                if (elapsedSeconds > 0) {
+                    currentSpeed = (currentRadiusMeters / 1000) / (elapsedSeconds / 3600);
+                }
+
+                // 4. 更新文字資訊
                 document.getElementById('status').innerHTML = `
                     已經過時間: <span class="highlight">${formatTime(elapsedSeconds)}</span><br>
-                    安全半徑: <span class="highlight">${(currentRadiusMeters / 1000).toFixed(2)} km</span>
+                    安全半徑: <span class="highlight">${(currentRadiusMeters / 1000).toFixed(2)} km</span><br>
+                    目前速度: <span class="highlight">${currentSpeed.toFixed(2)} km/h</span> (平均)
                 `;
 
                 // 動態調整地圖縮放以適應圓圈大小 (可選，這裡設為每10公里檢查一次避免畫面一直跳)
@@ -231,4 +293,5 @@
         }
     </script>
 </body>
+
 </html>

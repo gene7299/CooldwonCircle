@@ -38,6 +38,23 @@ const cooldownData = [
     { km: 1500, time: 7200 }  // 120m (2h)
 ];
 
+// Max Speed constant
+const MAX_SPEED_KMH = 900;
+const MAX_SPEED_KMS = MAX_SPEED_KMH / 3600;
+
+// Preprocess cooldownData to enforce max speed
+for (let i = 1; i < cooldownData.length; i++) {
+    const prev = cooldownData[i - 1];
+    const curr = cooldownData[i];
+    const timeDiff = curr.time - prev.time;
+    if (timeDiff > 0) {
+        const maxDist = prev.km + (timeDiff * MAX_SPEED_KMS);
+        if (curr.km > maxDist) {
+            curr.km = maxDist;
+        }
+    }
+}
+
 const locateBtn = document.getElementById('locate-btn');
 const startBtn = document.getElementById('start-btn');
 const statusDiv = document.getElementById('status');
@@ -55,29 +72,24 @@ function formatTime(seconds) {
 // Helper to calculate radius based on elapsed time (Linear Interpolation)
 function getRadiusForTime(elapsedSeconds) {
     if (elapsedSeconds <= 0) return 0;
-    
+
     // Find the interval we are in
     for (let i = 0; i < cooldownData.length - 1; i++) {
         const p1 = cooldownData[i];
         const p2 = cooldownData[i + 1];
-        
+
         if (elapsedSeconds >= p1.time && elapsedSeconds <= p2.time) {
             // Linear interpolation
             const ratio = (elapsedSeconds - p1.time) / (p2.time - p1.time);
             return p1.km + ratio * (p2.km - p1.km);
         }
     }
-    
-    // If beyond the last point (1500km / 2 hours), extrapolate or cap?
-    // User data shows >1500km is 2 hours, implying max cooldown is 2 hours.
-    // However, usually in these games, once you wait 2 hours you can go anywhere.
-    // So distinct behavior: if > 2 hours, radius could be considered infinite or we just show max.
-    // Let's cap at 1500km+ logic or just keep expanding linearly based on the last speed? 
-    // Actually typically "cooldown" means after 2 hours you can catch anything anywhere.
-    // So the circle should probably encompass the whole world or just stop expanding visually if it covers everything relevant.
-    // But physically, let's just return 1500 for anything > 7200s or maybe extremely large.
-    if (elapsedSeconds > 7200) {
-        return 20000; // Earth circumference basically, cleared cooldown
+
+    // If beyond the last point, extrapolate using MAX_SPEED
+    const lastPoint = cooldownData[cooldownData.length - 1];
+    if (elapsedSeconds > lastPoint.time) {
+        const extraTime = elapsedSeconds - lastPoint.time;
+        return lastPoint.km + (extraTime * MAX_SPEED_KMS);
     }
     return 0;
 }
@@ -89,12 +101,12 @@ locateBtn.addEventListener('click', () => {
         navigator.geolocation.getCurrentPosition((position) => {
             userLat = position.coords.latitude;
             userLng = position.coords.longitude;
-            
+
             if (userMarker) map.removeLayer(userMarker);
-            
+
             userMarker = L.marker([userLat, userLng]).addTo(map)
                 .bindPopup("你的位置").openPopup();
-                
+
             map.setView([userLat, userLng], 13);
             statusDiv.textContent = "已定位！請按下開始。";
             startBtn.disabled = false;
@@ -117,11 +129,11 @@ startBtn.addEventListener('click', () => {
     // Reset
     if (cooldownCircle) map.removeLayer(cooldownCircle);
     if (timerInterval) clearInterval(timerInterval);
-    
+
     startTime = Date.now();
     statusDiv.textContent = "冷卻計時中...";
     startBtn.textContent = "重新開始";
-    
+
     // Initial circle
     cooldownCircle = L.circle([userLat, userLng], {
         color: 'red',
@@ -133,24 +145,28 @@ startBtn.addEventListener('click', () => {
     timerInterval = setInterval(() => {
         const now = Date.now();
         const elapsedSeconds = (now - startTime) / 1000;
-        
+
         // Update Timer UI
         timerDiv.textContent = formatTime(elapsedSeconds);
-        
+
         // Calculate Radius
         const currentRadiusKm = getRadiusForTime(elapsedSeconds);
         const currentRadiusMeters = currentRadiusKm * 1000;
-        
+
         // Update Circle
         cooldownCircle.setRadius(currentRadiusMeters);
-        
-        // Update Radius UI
-        if (currentRadiusKm >= 20000) {
-             radiusInfoDiv.textContent = "冷卻完成 (任意距離)";
-             cooldownCircle.setStyle({ color: 'green', fillColor: '#3f0' });
-        } else {
-             radiusInfoDiv.textContent = `半徑: ${currentRadiusKm.toFixed(2)} 公里`;
+
+        // Update Radius UI and Speed
+        // Check if we are in the "extended" phase or normal phase
+        const lastPoint = cooldownData[cooldownData.length - 1];
+
+        radiusInfoDiv.textContent = `半徑: ${currentRadiusKm.toFixed(2)} 公里`;
+
+        let currentSpeed = 0;
+        if (elapsedSeconds > 0) {
+            currentSpeed = currentRadiusKm / (elapsedSeconds / 3600); // Average Speed = Total Dist / Total Time
         }
-        
+        document.getElementById('speed-info').textContent = `速度: ${currentSpeed.toFixed(2)} km/h`;
+
     }, 100); // Update every 100ms for smoothness
 });
