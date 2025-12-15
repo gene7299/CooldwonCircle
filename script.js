@@ -163,7 +163,9 @@ startBtn.addEventListener('click', () => {
         radiusInfoDiv.textContent = `半徑: ${currentRadiusKm.toFixed(2)} 公里`;
 
         let currentSpeed = 0;
-        if (elapsedSeconds > 0) {
+        if (elapsedSeconds > lastPoint.time) {
+            currentSpeed = MAX_SPEED_KMH;
+        } else if (elapsedSeconds > 0) {
             currentSpeed = currentRadiusKm / (elapsedSeconds / 3600); // Average Speed = Total Dist / Total Time
         }
         document.getElementById('speed-info').textContent = `速度: ${currentSpeed.toFixed(2)} km/h`;

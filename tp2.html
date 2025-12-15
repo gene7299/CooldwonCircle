@@ -265,7 +265,11 @@
 
                 // 3. 計算目前的擴張速度 (改為平均速度: 總距離 / 總時間)
                 let currentSpeed = 0;
-                if (elapsedSeconds > 0) {
+                const lastPoint = cooldownTable[cooldownTable.length - 1]; // Ensure lastPoint is available
+
+                if (elapsedSeconds > lastPoint.time) {
+                    currentSpeed = MAX_SPEED_KMH;
+                } else if (elapsedSeconds > 0) {
                     currentSpeed = (currentRadiusMeters / 1000) / (elapsedSeconds / 3600);
                 }
 
